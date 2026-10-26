@@ -1,4 +1,4 @@
-const VERSION = '686faca3';   // 由 npm run release 依內容雜湊改寫，不要手改
+const VERSION = '2dea3e1f';   // 由 npm run release 依內容雜湊改寫，不要手改
 const CACHE = 'phrase-drill-' + VERSION;
 const FILES = ["./index.html", "./styles.css", "./manifest.webmanifest",
   "./js/boot.js", "./js/app.js", "./js/drill.js", "./js/schedule.js", "./js/store.js", "./js/seed.js",

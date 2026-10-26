@@ -3,14 +3,19 @@
 // ===== 1. import 與常數 =====
 import { SEED } from './seed.js';
 import {
-  load, save, todayStatus, backupReminder,
-  validateSentenceInput, addSentence, updateSentence, deleteSentence,
-  startOrResumeSession, currentSentence, completeCard,
+  load, save, todayStatus, backupReminder, SCHEMA,
+  validateSentenceInput, addSentence, updateSentence, deleteSentence, mergeSeed,
+  startOrResumeSession, currentCard, cardTopic, completeCard, extendSession,
   DAILY_OPTIONS, setDailyCount, markExported, createInitialData, toBackupJSON, fromBackupJSON,
   writeUndo, readUndo, clearUndo, readCorrupt, clearCorrupt,
 } from './store.js';
-import { localDay, streakInfo, levelCounts, levelLabel, dueLabel, LEVEL_NAMES, resultMessage } from './schedule.js';
-import { newCard, cardInput, cardReveal, shownLevel, cardOutcome, cardStatus, hintSegments } from './drill.js';
+import {
+  localDay, streakInfo, levelCounts, levelLabel, dueLabel, STAGE_NAMES, resultMessage, rungMessage,
+} from './schedule.js';
+import {
+  newCard, cardInput, cardReveal, shownLevel, cardOutcome, cardStatus, hintSegments,
+  newProdCard, prodInput, prodSubmit, prodReveal, prodOutcome, prodStatus, prodHintSegments,
+} from './drill.js';
 
 const SCREENS = ['home', 'practice', 'library', 'edit', 'settings'];
 const NAV_SCREENS = ['home', 'library', 'settings'];
@@ -26,8 +31,9 @@ const exitBtn = document.getElementById('p-exit');
 let data = null;              // AppData
 let warnings = [];            // load 的 warnings；只在啟動流程第 3 步設定，匯入、還原、清除後設為 []
 let currentScreen = null;     // 'home' | 'practice' | 'library' | 'edit' | 'settings'
-let card = null;              // CardState；總結畫面時為 null
+let card = null;              // CardState（stage 0 到 2）或 ProdCard（stage 3）；總結畫面時為 null
 let cardSentence = null;      // 開新卡時存下的整個 Sentence
+let cardInfo = null;          // 開新卡時存下的 { stage, retry, pos }；只在 card 不是 null 時有意義
 let prevMessage = null;
 let resultMsg = null;
 let flashMsg = null;
@@ -93,11 +99,16 @@ function streakText(day) {                    // 首頁與總結共用（4.2、4
     + (s.current > 0 && !s.doneToday ? '（今天還沒練）' : '');
 }
 
+function moreLabel(st) {                      // 首頁與總結的「再練 N 句」（4.2、4.3）；st 是 todayStatus 的回傳值
+  return '再練 ' + Math.min(data.settings.dailyCount, st.remaining) + ' 句';
+}
+
+// 首頁五種狀態依 todayStatus 的 { kind, done, total, remaining }（4.2 的表）
 function renderHome() {
   const t = today();
   const st = todayStatus(data, t);
   const notes = [];
-  if (warnings.length > 0) {
+  if (warnings.length > 0) {                  // load 的 warnings，含第 2 版第一次開啟時的升級通知
     notes.push(h('div', { class: 'note' },
       warnings.map((w) => h('p', null, w)),
       h('button', { type: 'button', onclick: () => show('settings') }, '去設定頁')));
@@ -118,11 +129,12 @@ function renderHome() {
     main = h('button', { type: 'button', class: 'primary', onclick: startPractice }, '開始今天的練習');
   } else if (st.kind === 'continue') {
     progress = '今天 ' + st.done + ' / ' + st.total;
-    main = h('button', { type: 'button', class: 'primary', onclick: startPractice },
-      '繼續（第 ' + (st.done + 1) + ' / ' + st.total + ' 句）');
+    main = h('button', { type: 'button', class: 'primary', onclick: startPractice }, '繼續練習');
   } else if (st.kind === 'done') {
     progress = '今天 ' + st.done + ' / ' + st.total + '・完成';
-    main = h('button', { type: 'button', class: 'primary', disabled: true }, '今天已完成');
+    main = st.remaining > 0
+      ? h('button', { type: 'button', class: 'primary', onclick: startPractice }, moreLabel(st))
+      : h('button', { type: 'button', class: 'primary', 'aria-disabled': 'true' }, '今天完成了');   // 不綁 click
   } else {
     main = h('button', { type: 'button', class: 'primary', disabled: true }, '句子庫是空的');
   }
@@ -139,15 +151,35 @@ function renderHome() {
 }
 
 // ===== 7. 練習頁 =====
-// 首頁主要按鈕（開始或繼續）的 click handler（4.3）。全部同步執行，中間不得有 await、setTimeout
-// 或 Promise.then，否則 iOS 不讓 focus() 叫出鍵盤
-function startPractice() {
+// 首頁主要按鈕（開始、繼續、再練 N 句）的 click handler（4.2）。和 enterPractice 合起來全部同步執行，
+// 中間不得有 await、setTimeout 或 Promise.then，否則 iOS 不讓 focus() 叫出鍵盤
+function startPractice() {                     // 首頁主要按鈕；「今天完成了」與「句子庫是空的」不綁這個 handler
   const t = today();
+  if (todayStatus(data, t).kind === 'done') extendAndResume(t);   // 只有「再練 N 句」會走到這一行
+  else commit(startOrResumeSession(data, t));
+  enterPractice(renderHome);                   // 見 4.3；沒有卡可以打時重畫首頁
+}
+function extendAndResume(t) {                  // 「再練 N 句」的資料步驟，首頁與總結共用：先加練、再恢復（6.4）
+  commit(extendSession(data, t));
   commit(startOrResumeSession(data, t));
-  const s = currentSentence(data);
-  if (s === null) { renderHome(); return; }
-  cardSentence = s;
-  card = newCard(s.text, s.level);
+}
+function practiceMore() {                      // 總結畫面的「再練 N 句」（4.3 總結畫面第 4 條），同樣全部同步
+  extendAndResume(today());
+  enterPractice(() => show('home'));
+}
+
+// 開卡時存下 cardSentence、cardInfo、card 三樣東西，畫面一律從這三樣取值（4.3「卡片與 cardInfo」）
+function openCard(c) {                         // c 是 currentCard(data) 的回傳值，不是 null
+  cardSentence = c.sentence;
+  cardInfo = { stage: c.stage, retry: c.retry, pos: data.session.index + 1 };
+  card = c.stage === 3
+    ? newProdCard(c.sentence.frame, c.sentence.text, cardTopic(c.sentence, c.retry))
+    : newCard(c.sentence.text, c.stage);
+}
+function enterPractice(onNone) {               // onNone：沒有卡可以打時要做的事
+  const c = currentCard(data);
+  if (c === null) { onNone(); return; }
+  openCard(c);
   prevMessage = null;
   resultMsg = null;
   flashMsg = null;
@@ -155,35 +187,51 @@ function startPractice() {
   let flag = null;
   try { flag = localStorage.getItem('phrase-drill:debug'); } catch (e) { flag = null; }   // 讀取失敗視為未啟用（5.2）
   debugLines = flag === '1' ? [] : null;
-  show('practice');
+  show('practice');                            // renderPractice 在這裡先把 enterkeyhint 設好
   input.focus();
 }
 
+// 依 cardInfo.stage 決定各項（4.3「各階段的畫面」）；打字卡是 stage 0 到 2，議題應用卡是 stage 3
 function renderPractice() {
   const cardEl = document.getElementById('p-card');
   const summaryEl = document.getElementById('p-summary');
   cardEl.hidden = card === null;               // 每次都先決定顯示哪一塊，隔天按開始才不會看到舊的總結
   summaryEl.hidden = card !== null;
   if (card === null) { renderSummary(summaryEl); return; }
-  const s = data.session;
-  const lv = shownLevel(card);                 // 已揭示的卡片照 L0 處理
-  const shownIndex = card.complete ? s.index : s.index + 1;
-  const isLast = card.complete ? s.index === s.ids.length : s.index + 1 === s.ids.length;
-  document.getElementById('p-progress').textContent = shownIndex + ' / ' + s.ids.length + '・' + LEVEL_NAMES[lv];
-  revealBtn.hidden = !(card.level > 0 && !card.revealed && !card.complete);
-  const promptEl = document.getElementById('p-prompt');   // 題目一律取自 cardSentence，不呼叫 currentSentence
-  promptEl.classList.toggle('recall', lv === 2);           // recall 是 20px 一般字色，沒有時是 15px 淡色（styles.css）
-  promptEl.textContent = lv === 2 && cardSentence.zh === '' ? '（沒有中文意思，請從開頭兩個字背出整句）' : cardSentence.zh;
-  fill(document.getElementById('p-hint'), hintSegments(card.target, lv, card.matched, card.hasError)
-    .map((seg) => h('span', { class: 'seg-' + seg.kind }, seg.text)));
-  input.classList.toggle('has-error', card.hasError);
-  let status;
-  if (card.complete) status = resultMsg;       // 完成後改顯示 resultMessage（5.6）
-  else if (flashMsg !== null) status = flashMsg;
-  else status = cardStatus(card, prevMessage);
-  document.getElementById('p-status').textContent = status;
+  const prod = cardInfo.stage === 3;
+  const lv = prod ? 3 : shownLevel(card);      // 打字卡已揭示時照 L0 處理；議題應用卡固定用 STAGE_NAMES[3]
+  document.getElementById('p-progress').textContent = cardInfo.pos + ' / ' + data.session.ids.length
+    + '・' + STAGE_NAMES[lv] + (cardInfo.retry ? '（再試一次）' : '');
+  revealBtn.textContent = prod ? '看範例' : '看答案';
+  revealBtn.hidden = prod
+    ? card.revealed || card.complete
+    : !(card.level > 0 && !card.revealed && !card.complete);
+  const promptEl = document.getElementById('p-prompt');   // 題目一律取自 cardSentence 與 card，不回頭讀 session
+  promptEl.classList.toggle('recall', !prod && lv === 2);  // 只有打字卡的 lv 為 2 時是 20px 正常字色
+  if (prod) {
+    fill(promptEl,
+      h('span', { class: 'p-topic' }, '議題：' + card.topic),
+      card.revealed && !card.complete           // 揭示後、完成前第二行改顯示範例，取代中文那一行，題目區不會變高
+        ? h('span', { class: 'p-example', lang: 'en' }, '範例：' + card.target)
+        : cardSentence.zh === '' ? null : h('span', { class: 'p-zh' }, cardSentence.zh));
+  } else {
+    promptEl.textContent = lv === 2 && cardSentence.zh === '' ? '（沒有中文意思，請從開頭兩個字背出整句）' : cardSentence.zh;
+  }
+  const segs = prod
+    ? prodHintSegments(card.frame, card.revealed)
+    : hintSegments(card.target, lv, card.matched, card.hasError);
+  fill(document.getElementById('p-hint'), segs.map((seg) => h('span', { class: 'seg-' + seg.kind }, seg.text)));
+  const want = prod ? 'send' : 'next';         // 只在值不同時才寫，不重建 textarea、不 blur 再 focus
+  if (input.getAttribute('enterkeyhint') !== want) input.setAttribute('enterkeyhint', want);
+  input.classList.toggle('has-error', !prod && card.hasError);
+  const statusEl = document.getElementById('p-status');
+  if (card.complete && prod) {                 // 已完成的議題應用卡：兩行，第二行顯示範例
+    fill(statusEl, h('span', { class: 'st-line' }, resultMsg), h('span', { class: 'st-line' }, prodStatus(card, null)));
+  } else if (card.complete) statusEl.textContent = resultMsg;
+  else if (flashMsg !== null) statusEl.textContent = flashMsg;
+  else statusEl.textContent = prod ? prodStatus(card, prevMessage) : cardStatus(card, prevMessage);
   nextBtn.setAttribute('aria-disabled', card.complete ? 'false' : 'true');   // 不用 disabled，pointerdown 才收得到
-  nextBtn.textContent = isLast ? '完成' : '下一句';
+  nextBtn.textContent = card.complete && currentCard(data) === null ? '完成' : '下一句';
   const debugEl = document.getElementById('p-debug');
   debugEl.hidden = debugLines === null;
   debugEl.textContent = debugLines === null ? '' : debugLines.join('\n');
@@ -201,6 +249,10 @@ function renderSummary(el) {
       if (x) failed.push(x);                   // 已被刪除的句子略過
     });
   }
+  const st = todayStatus(data, today());
+  const more = st.kind === 'done' && st.remaining > 0
+    ? h('p', null, h('button', { type: 'button', class: 'primary', onclick: practiceMore }, moreLabel(st)))
+    : null;
   fill(el,
     h('p', null, '今天完成 ' + results.length + ' 句，其中 ' + passed + ' 句通過'),
     h('p', null, streakText(today())),         // 和首頁同一段文字（4.2）
@@ -208,6 +260,7 @@ function renderSummary(el) {
     failed.length > 0
       ? h('ul', null, failed.map((x) => h('li', null, h('div', { lang: 'en' }, x.text), x.zh === '' ? null : h('div', null, x.zh))))
       : null,
+    more,
     h('button', { type: 'button', onclick: () => show('home') }, '回首頁'));
 }
 
@@ -224,11 +277,20 @@ function debugLog(name, e) {
   document.getElementById('p-debug').textContent = debugLines.join('\n');
 }
 
+// handleValue、onEnter、submitProd、advance 逐字照規格 4.3「打字、送出與完成」
 function handleValue() {
   if (!card) return;
   flashMsg = null;
-  if (input.value.includes('\n')) { input.value = input.value.replace(/\n/g, ''); onEnter(); }
-  if (!card) return;                       // onEnter 可能已進入總結
+  const newline = input.value.includes('\n');
+  if (newline) input.value = input.value.replace(/\n/g, '');
+  if (cardInfo.stage === 3) {
+    card = prodInput(card, input.value);       // 先更新 typed，onEnter 送出的才是最新的內容
+    if (newline) onEnter();
+    renderPractice();                          // onEnter 可能已進入總結，renderPractice 會改畫總結
+    return;
+  }
+  if (newline) onEnter();
+  if (!card || cardInfo.stage === 3) return;   // onEnter 可能已進入總結，或已換成議題應用卡（goNext 已重畫）
   const wasComplete = card.complete;
   card = cardInput(card, input.value);
   if (card.complete && !wasComplete) finishCard();
@@ -237,41 +299,57 @@ function handleValue() {
 function onEnter() {
   const now = performance.now();
   debugLog('onEnter', now - lastEnterAt < 300 ? '去重' : '接受');
-  if (now - lastEnterAt < 300) return;     // keydown、beforeinput、input 三條路徑去重
+  if (now - lastEnterAt < 300) return;         // keydown、beforeinput、input 三條路徑去重
   lastEnterAt = now;
+  if (card && cardInfo.stage === 3 && !card.complete) { flashMsg = null; submitProd(); return; }
   advance();
 }
-function advance() {                       // Return 與「下一句」共用，規則見 4.3
+function submitProd() {                        // 只由 onEnter 呼叫；「下一句」不會送出
+  card = prodSubmit(card);
+  if (card.complete) finishCard();
+  renderPractice();
+}
+function advance() {                           // 卡片已完成時的 Return 與「下一句」共用
   if (!card) return;
-  if (!card.complete) { if (!card.hasError) flashMsg = '還沒打完，打完整句會自動完成'; renderPractice(); return; }
+  if (!card.complete) {
+    if (cardInfo.stage === 3) flashMsg = '寫好句子後按 Return 送出';
+    else if (!card.hasError) flashMsg = '還沒打完，打完整句會自動完成';
+    renderPractice();
+    return;
+  }
   goNext();
 }
 
-// 只在 card.complete 時呼叫（4.3 第 2、3 條）
+// 只在 card.complete 時呼叫；下一張一律由 currentCard 決定（4.3「換卡與結束」）
 function goNext() {
-  const s = currentSentence(data);
-  if (s !== null) {                        // 還有下一張：不 blur、不重建 textarea，鍵盤不會收起
+  const c = currentCard(data);
+  if (c !== null) {                            // 還有下一張：不 blur、不重建 textarea，鍵盤不會收起
     prevMessage = resultMsg;
     resultMsg = null;
-    cardSentence = s;
-    card = newCard(cardSentence.text, cardSentence.level);
+    flashMsg = null;
+    openCard(c);
     input.value = '';
     renderPractice();
     return;
   }
-  input.blur();                            // 最後一張：收起鍵盤，顯示總結
+  input.blur();                                // 最後一張：收起鍵盤，顯示總結
   card = null;
   cardSentence = null;
   renderPractice();
 }
 
-// 卡片從未完成變成完成的那一刻，由 handleValue 呼叫（4.3）
+// 卡片從未完成變成完成的那一刻，由 handleValue 或 submitProd 呼叫（4.3）
 function finishCard() {
   const before = cardSentence;
-  const outcome = cardOutcome(card);
-  commit(completeCard(data, outcome));     // 結果立刻存檔；最後一張也一併寫入當天完成
-  const after = data.sentences.find((x) => x.id === before.id);
-  resultMsg = resultMessage(before, after, outcome);
+  const outcome = cardInfo.stage === 3 ? prodOutcome(card) : cardOutcome(card);
+  const index = data.session.index;
+  commit(completeCard(data, outcome));         // 結果立刻存檔；這句結束、而且是最後一句時也一併寫入當天完成
+  if (data.session.index > index) {            // 這句今天結束了
+    const after = data.sentences.find((x) => x.id === before.id);
+    resultMsg = resultMessage(before, after, outcome);
+  } else {                                     // 還在同一句：換到下一個階段，或同一階段重試
+    resultMsg = rungMessage(cardInfo.stage, outcome);
+  }
 }
 
 // 練習頁的事件（5.2），由 bindEvents 的最後呼叫；newer 與儲存空間失敗畫面不會走到這裡
@@ -298,7 +376,7 @@ function bindPractice() {
     b.addEventListener('mousedown', (e) => e.preventDefault());
   }
   nextBtn.addEventListener('click', () => { advance(); if (card) input.focus(); });
-  revealBtn.addEventListener('click', () => { if (card) { flashMsg = null; card = cardReveal(card); renderPractice(); input.focus(); } });
+  revealBtn.addEventListener('click', () => { if (card) { flashMsg = null; card = cardInfo.stage === 3 ? prodReveal(card) : cardReveal(card); renderPractice(); input.focus(); } });
   resumeBtn.addEventListener('click', () => input.focus());
   exitBtn.addEventListener('click', () => { input.blur(); card = null; cardSentence = null; show('home'); });
 }
@@ -309,38 +387,55 @@ function openEdit(id) {                       // id 為 null 表示新增句子
   show('edit');
 }
 
-function renderLibrary() {
+// msg 是「補入內建句型」的結果文字；show('library') 不帶參數，所以離開再回來就清掉（4.4）
+function renderLibrary(msg = '') {
   const t = today();
   fill(document.getElementById('library'),
     h('div', { class: 'lib-head' },
       h('span', null, '共 ' + data.sentences.length + ' 句'),
-      h('button', { type: 'button', onclick: () => openEdit(null) }, '新增句子')),
+      h('button', { type: 'button', onclick: () => openEdit(null) }, '新增句子'),
+      h('button', { type: 'button', onclick: onMergeSeed }, '補入內建句型'),
+      h('span', { class: 'lib-msg' }, msg)),
     h('div', { class: 'lib-list' },
       data.sentences.map((s) => h('button', { type: 'button', class: 'lib-row', onclick: () => openEdit(s.id) },
         h('span', { class: 'lib-en', lang: 'en' }, s.text),
         h('span', { class: 'lib-zh' }, s.zh),
-        h('span', { class: 'lib-meta' }, [levelLabel(s), dueLabel(s, t)].filter(Boolean).join(' '))))));
+        h('span', { class: 'lib-meta' },
+          [levelLabel(s), dueLabel(s, t)].filter(Boolean).join(' ') + (s.frame !== '' ? '・有句型' : ''))))));
+}
+
+// 「補入內建句型」：mergeSeed 不改任何既有句子的英文與進度，所以不需要 confirm（4.4）
+function onMergeSeed() {
+  const r = mergeSeed(data, SEED);
+  commit(r.data);
+  renderLibrary(r.added === 0 && r.updated === 0
+    ? '內建句型都已經在句子庫裡'
+    : '已加入 ' + r.added + ' 句、補上 ' + r.updated + ' 句的句型');
 }
 
 function renderEdit() {
   const s = data.sentences.find((x) => x.id === editingId) || null;
-  const textEl = h('textarea', { id: 'edit-text', rows: 3, lang: 'en' }, s ? s.text : '');
+  const textEl = h('textarea', { id: 'edit-text', rows: 3, lang: 'en' }, s ? (s.frame !== '' ? s.frame : s.text) : '');
   const textErr = h('p', { class: 'field-err' });
   const zhEl = h('input', { id: 'edit-zh', type: 'text', value: s ? s.zh : '' });
   const zhErr = h('p', { class: 'field-err' });
+  const topicsEl = h('textarea', { id: 'edit-topics', rows: 3, lang: 'zh-Hant-TW' }, s ? s.topics.join('\n') : '');
+  const topicsErr = h('p', { class: 'field-err' });
   function onSave() {
-    const res = validateSentenceInput(data, textEl.value, zhEl.value, editingId);
-    if (!res.ok) {
+    const res = validateSentenceInput(data, textEl.value, zhEl.value, topicsEl.value, editingId);
+    if (!res.ok) {                             // 錯誤顯示在 res.field 對應的欄位下方，另外兩個欄位清空
       textErr.textContent = res.field === 'text' ? res.error : '';
       zhErr.textContent = res.field === 'zh' ? res.error : '';
+      topicsErr.textContent = res.field === 'topics' ? res.error : '';
       return;
     }
+    const fields = { text: res.text, zh: res.zh, frame: res.frame, topics: res.topics };   // 一律傳驗證後的版本
     if (editingId === null) {
       let id = newId();
       while (data.sentences.some((x) => x.id === id)) id = newId();   // 和既有 id 重複就重新產生
-      commit(addSentence(data, { id, text: res.text, zh: res.zh }));
+      commit(addSentence(data, { id, ...fields }));
     } else {
-      commit(updateSentence(data, editingId, { text: res.text, zh: res.zh }, today()));
+      commit(updateSentence(data, editingId, fields, today()));
     }
     show('library');
   }
@@ -357,9 +452,15 @@ function renderEdit() {
     h('label', { for: 'edit-zh' }, '中文'),
     zhEl,
     zhErr,
+    h('label', { for: 'edit-topics' }, '議題'),
+    topicsEl,
+    topicsErr,
+    h('p', { class: 'help' }, '一行一個，最多 6 個，每個 40 字以內，議題應用時輪流出題'),
     h('p', { class: 'help' }, '只能用英文鍵盤打得出來的字元'),
     h('p', { class: 'help' }, '彎引號、破折號與全形標點會自動換成英文標點'),
+    h('p', { class: 'help' }, '用 { } 包住可以替換的部分，例如 we propose {a new method}.；沒有大括號就不做議題應用'),
     editingId === null ? null : h('p', { class: 'help' }, '修改英文後，這句會從全句提示重新練起'),
+    editingId === null ? null : h('p', { class: 'help' }, '只改大括號的位置或議題不影響進度'),
     h('div', { class: 'edit-actions' },
       h('button', { type: 'button', onclick: onSave }, '儲存'),
       h('button', { type: 'button', onclick: () => show('library') }, '取消'),
@@ -423,7 +524,9 @@ function importBackup(text) {
   try { writeUndo(localStorage, data, 'import', nowIso()); } catch (e) { if (!confirm('無法另存目前資料，仍要匯入嗎？')) return; }
   commit(result.data);
   warnings = [];
-  renderSettings(['已匯入 ' + s.sentences + ' 句、' + s.days + ' 天紀錄', ...result.warnings]);
+  const msg = '已匯入 ' + s.sentences + ' 句、' + s.days + ' 天紀錄'
+    + (s.fromV1 ? '；這是第 1 版的備份，請到句子庫按「補入內建句型」補上新句與骨架' : '');
+  renderSettings([msg, ...result.warnings]);
 }
 
 // 7.6 匯入流程第 1 步：先取出檔案、清空 value（下次才能選同一個檔案），再讀內容
@@ -463,7 +566,7 @@ function settingsDaily() {
     h('h2', null, '每日題數'),
     h('select', { 'aria-label': '每日題數', onchange: (e) => commit(setDailyCount(data, Number(e.target.value))) },
       DAILY_OPTIONS.map((n) => h('option', { value: n, selected: n === data.settings.dailyCount }, n))),
-    h('p', { class: 'muted' }, '下一次建立今天的練習時生效；今天已經開始的練習不變'));
+    h('p', { class: 'muted' }, '每天練幾句，一句會打好幾張卡。下一次建立今天的練習或加練時生效；今天已經排好的句子不變'));
 }
 
 // 4.6 第 2 區：備份；msgs 每條一行，放在備份區最上方
@@ -535,12 +638,13 @@ function settingsDiagnostics(copyOk) {
   let debugOn = false;
   try { debugOn = localStorage.getItem('phrase-drill:debug') === '1'; } catch (e) { debugOn = false; }
   // 不含原始資料；版本與永久儲存讀 span 當下的文字，還是「…」也照樣複製
-  const diagText = () => ['版本：' + ver.textContent, '以主畫面 app 開啟：' + standalone,
+  const diagText = () => ['版本：' + ver.textContent, '資料格式：' + SCHEMA, '以主畫面 app 開啟：' + standalone,
     '永久儲存：' + persisted.textContent, 'SW 控制中：' + controlled, '錯誤紀錄：',
     ...(errors.length ? errors : ['（沒有錯誤紀錄）']), ...(corrupt ? [corruptLine] : [])].join('\n');
   return h('details', null,
     h('summary', null, '診斷'),
     h('p', null, '版本：', ver),
+    h('p', null, '資料格式：' + SCHEMA),          // 同步取得的固定值，不等 promise（4.6）
     h('p', null, '以主畫面 app 開啟：' + standalone),
     h('p', null, '永久儲存：', persisted),
     h('p', null, 'SW 控制中：' + controlled),
@@ -655,6 +759,12 @@ function boot() {
   setupServiceWorker();
   if (isStandalone()) navigator.storage?.persist?.().catch(() => {});
   document.addEventListener('visibilitychange', onVisibilityChange);
+  window.addEventListener('focus', onVisibilityChange);   // 桌面視窗一直可見時，回到視窗也檢查換日（4.7）
+  window.addEventListener('storage', (e) => {   // 另一個分頁或視窗改了主資料：本頁的 data 已過期，直接重新載入（4.7）
+    if (e.key !== 'phrase-drill:data') return;
+    if (currentScreen === 'practice') { input.blur(); card = null; cardSentence = null; }
+    location.reload();
+  });
 }
 
 boot();

@@ -59,7 +59,9 @@ export class FakeStorage {
 }
 
 /**
- * 建立一句未開始的 Sentence（reps 為 0，進度欄位都是初始值），再套用 overrides；每次回傳新物件。
+ * 建立一句未開始、沒有骨架的 Sentence（frame 為 ''、topics 為 []，reps 為 0，進度欄位都是初始值），欄位依規格 7.1 的順序，
+ * 再套用 overrides；每次回傳新物件。要測議題應用時，overrides 一併給 frame 與 topics；frame 必須是 normalizeFrame 的輸出，
+ * 而且去掉大括號後等於 text，否則 sanitizeData 會把它清成 ''。
  * 要當成練過的句子時，overrides 必須同時把 reps 設成大於 0，否則 pickToday 會把它歸為新句，
  * sanitizeData 也會把 level 等進度欄位重設成初始值。
  * @param {Partial<Sentence>} [overrides]
@@ -70,6 +72,8 @@ export function makeSentence(overrides = {}) {
     id: 'x1',
     text: 'This is a test sentence.',
     zh: '測試句',
+    frame: '',
+    topics: [],
     level: 0,
     streak: 0,
     due: null,

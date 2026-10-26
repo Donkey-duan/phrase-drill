@@ -114,6 +114,27 @@ test('js/app.js：全文（含註解）不得出現 innerHTML', () => {
   assert.equal(read('js/app.js').includes('innerHTML'), false);
 });
 
+// app.js 裡頂層 function 的本文：從 `function 名稱(` 切到下一個頂層 function（含 async function）或檔尾，去掉行註解
+function appFunctionBody(src, name) {
+  const start = src.indexOf('\nfunction ' + name + '(');
+  assert.ok(start >= 0, `js/app.js 找不到 function ${name}(`);
+  const rest = src.slice(start + 1);
+  const ends = ['\nfunction ', '\nasync function '].map((m) => rest.indexOf(m)).filter((i) => i >= 0);
+  const body = ends.length > 0 ? rest.slice(0, Math.min(...ends)) : rest;
+  return body.replace(/\/\/.*$/gm, '');
+}
+
+// 規格 4.2、4.3：開始練習與「再練 N 句」的 click handler 和 enterPractice 必須全部同步，iOS 才會讓 focus() 叫出鍵盤
+test('js/app.js：startPractice、extendAndResume、practiceMore、openCard、enterPractice 的本文沒有 await、setTimeout、.then(', () => {
+  const src = read('js/app.js');
+  for (const name of ['startPractice', 'extendAndResume', 'practiceMore', 'openCard', 'enterPractice']) {
+    const body = appFunctionBody(src, name);
+    for (const bad of ['await', 'setTimeout', '.then(']) {
+      assert.equal(body.includes(bad), false, `${name} 的本文出現 ${bad}`);
+    }
+  }
+});
+
 for (const file of ['js/boot.js', 'sw.js']) {
   test(`${file}：照 classic script 的規則編譯，不丟出例外`, () => {
     const source = read(file);

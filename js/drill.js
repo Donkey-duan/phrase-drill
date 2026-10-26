@@ -5,6 +5,9 @@ export const MISTAKE_LIMIT = 2;
 export const LONG_SENTENCE_WORDS = 16;    // 達到這個字數，容許上限加 1
 export const DEVIATION_LIMIT = 3;         // L0 錯誤尾巴累積到這個長度才計失誤
 export const ANCHOR_WORDS = 2;            // L2 顯示的開頭字數
+export const PROD_ATTEMPTS = 3;           // 議題應用送出失敗幾次後揭示範例
+export const PROD_HINT_FIRST_LETTERS = true;  // 議題應用的提示列固定字只給首字母；false 時固定字完整顯示
+export const SLOT_BLANK = '____';         // 提示列裡空格的顯示文字，四個底線
 
 // 5.3 mapPunct 對照表：來源字元 → ASCII
 const PUNCT_MAP = {
@@ -244,7 +247,7 @@ export function cardOutcome(card) {
  * 未完成卡片的狀態列文字，依 5.6 的優先順序。卡片完成後改顯示 resultMessage，
  * 有 flashMsg 時優先顯示 flashMsg，這兩件事都由 app.js 處理。
  * @param {CardState} card
- * @param {string|null} previous 上一句的結果訊息，沒有時為 null
+ * @param {string|null} previous 上一張卡完成時的狀態列訊息（rungMessage 或 resultMessage），沒有時為 null
  * @returns {string}
  */
 export function cardStatus(card, previous) {
@@ -254,6 +257,164 @@ export function cardStatus(card, previous) {
   if (card.revealed && card.hasError) return '這次算沒過，請刪回紅色的位置，再照著全句打完';
   if (card.revealed) return '這次算沒過，請照著全句打完';
   if (card.hasError) return '有錯，請刪回紅色的位置・' + count;
-  if (card.typed === '' && previous !== null) return '上一句：' + previous;
+  if (card.typed === '' && previous !== null) return '上一張：' + previous;
   return count;
+}
+
+// ---- 第 2 版：句型骨架與議題應用（規格 5.7、5.8） ----
+
+/**
+ * @typedef {{ slot: boolean, text: string }} FramePart   slot 為 true 是空格（大括號裡的範例填法），false 是固定字
+ * @typedef {{ ok: true, parts: FramePart[] } | { ok: false, error: string }} ParseResult
+ * @typedef {{ ok: true, frame: string, text: string } | { ok: false, error: string }} FrameResult
+ * @typedef {{ ok: true } | { ok: false, reason: 'copy'|'missing'|'slot', detail: string }} SkeletonResult
+ * @typedef {{ frame: string, target: string, topic: string, typed: string, attempts: number,
+ *   complete: boolean, revealed: boolean, lastError: string|null, hint: null|'cjk' }} ProdCard
+ */
+
+export const stripBraces = (s) => s.replace(/[{}]/g, '');
+
+// 去掉字頭與字尾的撇號；用線性掃描，不用 /^'+|'+$/ 這種遇到長串撇號會回溯成二次方時間的正規式
+function trimApostrophes(w) {
+  let a = 0, b = w.length;
+  while (a < b && w[a] === "'") a++;
+  while (b > a && w[b - 1] === "'") b--;
+  return w.slice(a, b);
+}
+
+export function tokens(s) {
+  return s.toLowerCase().replace(/[^a-z0-9']/g, ' ').split(' ')
+    .map((w) => trimApostrophes(w))
+    .filter((w) => w !== '');
+}
+
+export function parseFrame(frame) {
+  const parts = [];
+  let buf = '';
+  let inSlot = false;
+  for (const ch of frame) {
+    if (ch === '{') {
+      if (inSlot) return { ok: false, error: '大括號沒有成對' };
+      if (buf !== '') parts.push({ slot: false, text: buf });
+      buf = ''; inSlot = true;
+    } else if (ch === '}') {
+      if (!inSlot) return { ok: false, error: '大括號沒有成對' };
+      parts.push({ slot: true, text: buf });
+      buf = ''; inSlot = false;
+    } else buf += ch;
+  }
+  if (inSlot) return { ok: false, error: '大括號沒有成對' };
+  if (buf !== '') parts.push({ slot: false, text: buf });
+  if (parts.some((p) => p.slot && p.text.trim() === '')) return { ok: false, error: '大括號裡要有範例內容' };
+  if (/[A-Za-z0-9]\{|\}[A-Za-z0-9]|\}'[A-Za-z0-9]/.test(frame)) return { ok: false, error: '大括號要放在字與字之間，不能切開一個字' };
+  if (!parts.some((p) => p.slot)) return { ok: false, error: '至少要有一組大括號' };
+  let n = 0;
+  for (const p of parts) if (!p.slot) n += tokens(p.text).length;
+  if (n < 2) return { ok: false, error: '大括號外面至少要保留兩個英文字' };
+  return { ok: true, parts };
+}
+
+export function normalizeFrame(raw) {
+  const c = canonicalize(raw);
+  const c2 = canonicalize(c.replace(/\{\s+/g, ' {').replace(/\s+\}/g, '} '));   // 大括號內側的空白移到外側
+  const p = parseFrame(c2);
+  if (!p.ok) return p;
+  return { ok: true, frame: c2, text: canonicalize(stripBraces(c2)) };
+}
+
+function sameTokens(a, b) {
+  return a.length === b.length && a.every((w, k) => w === b[k]);
+}
+function occurrences(u, f, from) {             // f 在 u 裡從 from 起連續出現的所有起點，由小到大
+  const out = [];
+  for (let i = from; i + f.length <= u.length; i++) {
+    if (f.every((w, k) => u[i + k] === w)) out.push(i);
+  }
+  return out;
+}
+export function skeletonCheck(frame, typed) {
+  const p = parseFrame(frame);
+  if (!p.ok) throw new Error('skeletonCheck：骨架不合法：' + p.error);
+  const u = tokens(typed);
+  if (sameTokens(u, tokens(stripBraces(frame)))) return { ok: false, reason: 'copy', detail: '' };
+  let c = 0;
+  let prevSlot = p.parts[0].slot;
+  let lastSlot = '';                           // 最近經過的空格片段的範例文字
+  let endsWithSlot = false;                    // 最後一個「空格或有 token 的固定字」片段是不是空格
+  for (const part of p.parts) {
+    if (part.slot) { prevSlot = true; endsWithSlot = true; lastSlot = part.text.trim(); continue; }
+    const f = tokens(part.text);
+    if (f.length === 0) continue;              // 只有標點的片段：不改 prevSlot
+    const hits = occurrences(u, f, c);
+    let i;
+    if (!prevSlot) {
+      if (hits.length === 0) return { ok: false, reason: 'missing', detail: part.text.trim() };
+      i = hits[0];
+    } else {
+      const later = hits.filter((h) => h > c);
+      if (later.length > 0) i = later[0];
+      else if (hits.length > 0) return { ok: false, reason: 'slot', detail: lastSlot };
+      else return { ok: false, reason: 'missing', detail: part.text.trim() };
+    }
+    c = i + f.length;
+    prevSlot = false; endsWithSlot = false;
+  }
+  if (endsWithSlot && c >= u.length) return { ok: false, reason: 'slot', detail: lastSlot };
+  return { ok: true };
+}
+
+export function newProdCard(frame, target, topic) {
+  return { frame, target, topic, typed: '', attempts: 0, complete: false, revealed: false, lastError: null, hint: null };
+}
+export function prodInput(card, raw) {
+  if (card.complete) return card;
+  return { ...card, typed: canonicalizeInput(raw), hint: containsCJK(raw) ? 'cjk' : null };
+}
+export function prodSubmit(card) {
+  if (card.complete) return card;
+  if (tokens(card.typed).length === 0) return { ...card, lastError: '還沒有寫句子' };
+  if (nonTypeableChars(card.typed).length > 0) return { ...card, lastError: '句子裡有英文鍵盤打不出的字元，請改寫' };
+  const r = skeletonCheck(card.frame, card.typed);
+  if (r.ok) return { ...card, complete: true, lastError: null };
+  const attempts = card.attempts + 1;
+  const lastError = r.reason === 'copy' ? '這句和範例一樣，請換成自己的內容'
+    : r.reason === 'missing' ? '缺少固定字：' + r.detail
+    : '空格處要填上自己的內容：' + r.detail;
+  return { ...card, attempts, lastError, revealed: card.revealed || attempts >= PROD_ATTEMPTS };
+}
+export function prodReveal(card) {
+  if (card.complete) return card;
+  return { ...card, revealed: true, lastError: null };
+}
+export const prodOutcome = (card) => (card.revealed ? 'fail' : 'pass');
+
+const UNCOUNTED_ERRORS = ['還沒有寫句子', '句子裡有英文鍵盤打不出的字元，請改寫'];   // prodSubmit 不計次的兩句，不 export
+export function prodStatus(card, previous) {
+  if (card.complete && !card.revealed) return '通過，範例：' + card.target;
+  if (card.complete) return '完成，範例：' + card.target;
+  if (card.hint === 'cjk') return '偵測到中文輸入，請切換到英文鍵盤（不計失誤）';
+  if (card.lastError !== null) {
+    if (card.revealed || UNCOUNTED_ERRORS.includes(card.lastError)) return card.lastError;
+    return card.lastError + '，還可以再試 ' + (PROD_ATTEMPTS - card.attempts) + ' 次';
+  }
+  if (card.revealed) return '已顯示範例，請照骨架寫一句自己的話';
+  if (card.typed === '' && previous !== null) return '上一張：' + previous;
+  return '用這個句型寫一句自己的話，按 Return 送出';
+}
+
+export function prodHintSegments(frame, revealed, firstLetters = PROD_HINT_FIRST_LETTERS) {
+  const p = parseFrame(frame);
+  if (!p.ok) throw new Error('prodHintSegments：骨架不合法：' + p.error);
+  const segs = [];
+  const push = (text, kind) => {
+    const prev = segs[segs.length - 1];
+    if (prev && prev.kind === kind) prev.text += text;
+    else segs.push({ text, kind });
+  };
+  for (const part of p.parts) {
+    if (part.slot) push(SLOT_BLANK, 'mask');
+    else if (revealed || !firstLetters) push(part.text, 'todo');
+    else for (const s of hintSegments(part.text, 1, 0, false)) push(s.text, s.kind);
+  }
+  return segs;
 }

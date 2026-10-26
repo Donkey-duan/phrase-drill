@@ -2,9 +2,10 @@
 /** @typedef {string} Day  'YYYY-MM-DD' */
 
 export const ROLLOVER_HOUR = 4;
-export const PROMOTE_AFTER = 2;
+export const PROMOTE_AFTER = 1;
 export const L2_INTERVALS = [2, 4, 7, 14, 30];
 export const LEVEL_NAMES = ['全句提示', '首字母提示', '背誦'];
+export const STAGE_NAMES = ['全句提示', '首字母提示', '背誦', '議題應用'];
 
 function fmt(y, m, d) {                                                // 補零成 YYYY-MM-DD
   return String(y).padStart(4, '0') + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
@@ -162,7 +163,8 @@ export function dueLabel(s, today) {
 }
 
 /**
- * 卡片完成後狀態列的結果訊息（6.2）；after 是 applyResult(before, outcome, day) 的回傳值。
+ * 一句當天的階梯結束時（completeCard 讓 session.index 前進時）的狀態列文字（6.2）；after 是 applyResult(before, outcome, day) 的回傳值。
+ * PROMOTE_AFTER 為 1 時四條規則涵蓋所有情況；改回大於 1 時要補回「再 N 次升到」那一條。
  * @param {Sentence} before
  * @param {Sentence} after
  * @param {Outcome} outcome
@@ -170,10 +172,20 @@ export function dueLabel(s, today) {
  */
 export function resultMessage(before, after, outcome) {
   if (outcome === 'fail') {
-    if (after.level < before.level) return '沒過，下次退回' + LEVEL_NAMES[after.level];
-    return '沒過，下次仍是全句提示';
+    if (after.level < before.level) return '沒過，明天退回' + LEVEL_NAMES[after.level];
+    return '沒過，明天仍從全句提示開始';                            // before.level 為 0
   }
-  if (after.level > before.level) return '通過，下次升到' + LEVEL_NAMES[after.level];
-  if (after.level < 2) return '通過，再 ' + (PROMOTE_AFTER - after.streak) + ' 次升到' + LEVEL_NAMES[after.level + 1];
-  return '通過，維持背誦';
+  if (after.level > before.level) return '通過，明天從' + LEVEL_NAMES[after.level] + '開始';
+  return '通過，維持背誦';                                          // before.level 為 2
+}
+
+/**
+ * 一句還沒結束、只是換階段或重試時（completeCard 沒有讓 session.index 前進時）的狀態列文字（6.2）。
+ * stage 是剛完成的那張卡的階段；pass 時 stage 小於 3。
+ * @param {0|1|2|3} stage
+ * @param {Outcome} outcome
+ * @returns {string}
+ */
+export function rungMessage(stage, outcome) {
+  return outcome === 'pass' ? '通過，接著' + STAGE_NAMES[stage + 1] : '沒過，再試一次' + STAGE_NAMES[stage];
 }

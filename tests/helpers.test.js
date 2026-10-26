@@ -72,19 +72,20 @@ test('FakeStorage 的 failWrites 讓 setItem 丟出 QuotaExceededError，內容�
   assert.equal(s.getItem('k'), 'new');
 });
 
-test('makeSentence 預設是一句未開始的句子，overrides 蓋在預設值上；TODAY 為 2026-10-14', () => {
+test('makeSentence 預設是一句未開始、沒有骨架的句子，欄位依 7.1 的順序，overrides 蓋在預設值上；TODAY 為 2026-10-14', () => {
   assert.equal(TODAY, '2026-10-14');
   assert.deepEqual(makeSentence(), {
-    id: 'x1', text: 'This is a test sentence.', zh: '測試句', level: 0, streak: 0,
+    id: 'x1', text: 'This is a test sentence.', zh: '測試句', frame: '', topics: [], level: 0, streak: 0,
     due: null, lastSeen: null, lastResult: null, reps: 0,
   });
-  assert.deepEqual(Object.keys(makeSentence()), ['id','text','zh','level','streak','due','lastSeen','lastResult','reps']);
+  assert.deepEqual(Object.keys(makeSentence()), ['id','text','zh','frame','topics','level','streak','due','lastSeen','lastResult','reps']);
   assert.deepEqual(makeSentence({ id: 'b', reps: 2, level: 1, due: TODAY }), {
-    id: 'b', text: 'This is a test sentence.', zh: '測試句', level: 1, streak: 0,
+    id: 'b', text: 'This is a test sentence.', zh: '測試句', frame: '', topics: [], level: 1, streak: 0,
     due: '2026-10-14', lastSeen: null, lastResult: null, reps: 2,
   });
   const a = deepFreeze(makeSentence());        // 每次回傳新物件，凍結一個不影響下一個
   const b = makeSentence();
   assert.notEqual(a, b);
   assert.equal(Object.isFrozen(b), false);
+  assert.notEqual(a.topics, b.topics);         // topics 每次都是新的陣列
 });

@@ -110,7 +110,7 @@ test('containsCJK：10.3 的案例', () => {
   assert.equal(containsCJK('In this paper, we'), false);
 });
 
-test('Review Focus 1：從 PDF、Word 或網頁貼上的標點與不可見字元正規化成 ASCII，照常存檔', () => {
+test('canonicalize：從 PDF、Word 或網頁貼上的標點與不可見字元正規化成 ASCII，照常存檔', () => {
   for (const c of ['\u2018', '\u201A', '\u201B', '\u02BC']) {               // ‘ ‚ ‛ ʼ
     assert.equal(canonicalize('x' + c + 'y'), "x'y", codePointLabel(c));
   }
@@ -144,7 +144,7 @@ test('mistakeLimit：10.3 的 20 個字的句子為 3，7 個字的 target 為 2
   assert.equal(mistakeLimit('In this paper, we propose a method.'), 2);
 });
 
-test('Review Focus 4：剛好 16 個字的句子容許 3，15 個字的句子（s05、s51）容許 2', () => {
+test('mistakeLimit：剛好 16 個字的句子容許 3，15 個字的句子（s05、s51）容許 2', () => {
   const s05 = 'To the best of our knowledge, this is the first work to study this problem.';
   assert.equal(wordCount(s05), 15);
   assert.equal(mistakeLimit(s05), 2);
@@ -473,7 +473,7 @@ test('isPeriodShortcut：目標在那個位置不是空白，或根本沒有錯�
     assert.equal(cardStatus(card, null), '這次算沒過，請刪回紅色的位置，再照著全句打完');
   });
 
-  test('cardStatus 第 4 種：revealed 而且沒錯（也優先於「上一句」）', () => {
+  test('cardStatus 第 4 種：revealed 而且沒錯（也優先於「上一張」）', () => {
     assert.equal(cardStatus(cardReveal(newCard(T, 1)), PREV), '這次算沒過，請照著全句打完');
   });
 
@@ -482,8 +482,11 @@ test('isPeriodShortcut：目標在那個位置不是空白，或根本沒有錯�
     assert.equal(cardStatus(card, null), '有錯，請刪回紅色的位置・失誤 1／容許 2');
   });
 
-  test('cardStatus 第 6 種：typed 為空字串而且 previous 不為 null', () => {
-    assert.equal(cardStatus(newCard(T, 2), PREV), '上一句：通過，維持背誦');
+  test('cardStatus 第 6 種：typed 為空字串而且 previous 不為 null，前綴是「上一張：」', () => {
+    assert.equal(cardStatus(newCard(T, 2), PREV), '上一張：通過，維持背誦');
+    assert.equal(cardStatus(newCard(T, 1), '通過，接著首字母提示'), '上一張：通過，接著首字母提示');
+    assert.equal(cardStatus(newCard(T, 2), '通過，明天從背誦開始'), '上一張：通過，明天從背誦開始');
+    assert.ok(!cardStatus(newCard(T, 2), PREV).startsWith('上一句：'));
   });
 
   test('cardStatus 第 7 種：其他', () => {
@@ -501,3 +504,382 @@ test('補充：句點位置打了別的字母不是雙空白句點，全句之�
     { typed: target + ' x', matched: 35, hasError: true, complete: false });
   assert.equal(isPeriodShortcut(target, compareTyped(target, 'In thisx')), false);
 });
+
+// ===== 第 2 版：句型骨架與議題應用（規格 5.7、5.8、10.3） =====
+// import 宣告在模組頂層的任何位置都合法，所以第 2 版的名稱在這裡另外 import，不改檔案開頭
+import { PROD_ATTEMPTS, PROD_HINT_FIRST_LETTERS, SLOT_BLANK, stripBraces, tokens, parseFrame, normalizeFrame, skeletonCheck } from '../js/drill.js';
+import { newProdCard, prodInput, prodSubmit, prodReveal, prodOutcome, prodStatus, prodHintSegments } from '../js/drill.js';
+import { deepFreeze } from './helpers.js';
+
+test('5.7 第 2 版的常數：PROD_ATTEMPTS 3、PROD_HINT_FIRST_LETTERS true、SLOT_BLANK 四個底線', () => {
+  assert.equal(PROD_ATTEMPTS, 3);
+  assert.equal(PROD_HINT_FIRST_LETTERS, true);
+  assert.equal(SLOT_BLANK, '____');
+});
+
+// 5.8 stripBraces 與 tokens 的表格
+{
+  const STRIP_CASES = [
+    ['we propose {a method}.', 'we propose a method.'],
+    ['{{x}}', 'x'],
+    ['no braces', 'no braces'],
+    ['}{', ''],
+  ];
+  for (const [input, want] of STRIP_CASES) {
+    test('stripBraces：' + JSON.stringify(input) + ' 為 ' + JSON.stringify(want), () => {
+      assert.equal(stripBraces(input), want);
+    });
+  }
+
+  const TOKEN_CASES = [
+    ["Don't stop.", ["don't", 'stop']],
+    ["'quoted'", ['quoted']],
+    ['state-of-the-art', ['state', 'of', 'the', 'art']],
+    ['Fig. 3 and 3D.', ['fig', '3', 'and', '3d']],
+    ['', []],
+    ["rock 'n' roll", ['rock', 'n', 'roll']],
+    ["students' work", ['students', 'work']],
+    ['e.g., 10%', ['e', 'g', '10']],
+    ['résumé', ['r', 'sum']],
+    ['To address 這個 issue', ['to', 'address', 'issue']],
+    ["'''''''''''x", ['x']],
+  ];
+  for (const [input, want] of TOKEN_CASES) {
+    test('tokens：' + JSON.stringify(input), () => {
+      assert.deepEqual(tokens(input), want);
+    });
+  }
+}
+
+// 5.8 parseFrame 的表格，加上 10.3 的「we propose a} method{.」
+{
+  const F = (text) => ({ slot: false, text });
+  const S = (text) => ({ slot: true, text });
+  const OK_CASES = [
+    ['To address this issue, we propose {a simple yet effective method}.',
+      [F('To address this issue, we propose '), S('a simple yet effective method'), F('.')]],
+    ['The question is not whether {we should regulate AI}, but how {we do it}.',
+      [F('The question is not whether '), S('we should regulate AI'), F(', but how '), S('we do it'), F('.')]],
+    ['{Formal verification} is not a substitute for {testing}.',
+      [S('Formal verification'), F(' is not a substitute for '), S('testing'), F('.')]],
+    ['{a}{b} is fine.', [S('a'), S('b'), F(' is fine.')]],
+    ["'{x}' is the {key}.", [F("'"), S('x'), F("' is the "), S('key'), F('.')]],
+  ];
+  for (const [frame, parts] of OK_CASES) {
+    test('parseFrame ok：' + frame, () => {
+      assert.deepEqual(parseFrame(frame), { ok: true, parts });
+    });
+  }
+  const CUT = '大括號要放在字與字之間，不能切開一個字';
+  const ERROR_CASES = [
+    ['we propose {a method.', '大括號沒有成對'],
+    ['we propose a} method.', '大括號沒有成對'],
+    ['we {propose {a} method}.', '大括號沒有成對'],
+    ['we propose a} method{.', '大括號沒有成對'],
+    ['we propose {  } method.', '大括號裡要有範例內容'],
+    ["{The model}'s output is {robust}.", CUT],
+    ['we {re}consider it.', CUT],
+    ['we propose{a method}.', CUT],
+    ['we propose{ a method}.', CUT],
+    ['we propose a method.', '至少要有一組大括號'],
+    ['{We} propose {a method}.', '大括號外面至少要保留兩個英文字'],
+    ['{x}, and {y}.', '大括號外面至少要保留兩個英文字'],
+    ['we{ } it is.', '大括號裡要有範例內容'],
+    ['we{x}.', CUT],
+    ['we ran 10{x} trials here.', CUT],
+  ];
+  for (const [frame, error] of ERROR_CASES) {
+    test('parseFrame 錯誤：' + frame + ' 為「' + error + '」', () => {
+      assert.deepEqual(parseFrame(frame), { ok: false, error });
+    });
+  }
+}
+
+// 5.8 normalizeFrame 的表格與三個性質
+{
+  const OK_CASES = [
+    ['we propose { a method } .', 'we propose {a method} .', 'we propose a method .'],
+    ['we propose { a method }.', 'we propose {a method} .', 'we propose a method .'],
+    ['we propose{ a method}.', 'we propose {a method}.', 'we propose a method.'],
+    ['  To address this issue,  we propose {a simple yet effective method}.  ',
+      'To address this issue, we propose {a simple yet effective method}.',
+      'To address this issue, we propose a simple yet effective method.'],
+    ['we propose ｛a method｝.', 'we propose {a method}.', 'we propose a method.'],
+    ['we propose ｛ a method ｝.', 'we propose {a method} .', 'we propose a method .'],
+    ['“It’s” {fine} — really…', `"It's" {fine} - really...`, `"It's" fine - really...`],
+  ];
+  for (const [raw, frame, text] of OK_CASES) {
+    test('normalizeFrame ok：' + JSON.stringify(raw), () => {
+      const r = normalizeFrame(raw);
+      assert.deepEqual(r, { ok: true, frame, text });
+      assert.deepEqual(normalizeFrame(r.frame), r);                              // 冪等
+      assert.equal(canonicalize(stripBraces(r.frame)), r.text);
+      assert.equal(r.text, canonicalize(stripBraces(canonicalize(raw))));      // 空白只移動、不刪除
+    });
+  }
+  const ERROR_CASES = [
+    ['we propose {a method.', '大括號沒有成對'],
+    ['we propose {} .', '大括號裡要有範例內容'],
+    ['we propose a method.', '至少要有一組大括號'],
+    ['{We} propose {a method}.', '大括號外面至少要保留兩個英文字'],
+    ['we propose{a method}.', '大括號要放在字與字之間，不能切開一個字'],
+  ];
+  for (const [raw, error] of ERROR_CASES) {
+    test('normalizeFrame 錯誤：' + raw + ' 為「' + error + '」', () => {
+      assert.deepEqual(normalizeFrame(raw), { ok: false, error });
+    });
+  }
+}
+
+// 5.8 skeletonCheck 的表格（F1 到 F4），加上所有格、縮寫與只有標點的固定字片段的補充案例
+const F1 = 'To address this issue, we propose {a simple yet effective method}.';
+const F2 = 'The question is not whether {we should regulate AI}, but how {we do it}.';
+const F3 = '{Formal verification} is not a substitute for {testing}.';
+const F4 = '{Cost}, {not speed}, decides the outcome.';
+{
+  const OK = { ok: true };
+  const copy = { ok: false, reason: 'copy', detail: '' };
+  const slot = (detail) => ({ ok: false, reason: 'slot', detail });
+  const missing = (detail) => ({ ok: false, reason: 'missing', detail });
+  const CASES = [
+    ['F1', F1, 'To address this issue, we propose a hardware interlock.', OK],
+    ['F1', F1, 'to address this issue we propose a hardware interlock', OK],
+    ['F1', F1, 'Therefore, to address this issue, we propose a plan.', OK],
+    ['F1', F1, 'To address this issue, we propose a simple yet effective method.', copy],
+    ['F1', F1, 'to address this issue we propose a simple yet effective method', copy],
+    ['F1', F1, 'To address this issue, we propose.', slot('a simple yet effective method')],
+    ['F1', F1, 'We propose a hardware interlock to address this issue.', missing('To address this issue, we propose')],
+    ['F2', F2, 'The question is not whether we need rules, but how we enforce them.', OK],
+    ['F2', F2, 'The question is not whether we need rules but how.', slot('we do it')],
+    ['F2', F2, 'The question is not whether, but how we enforce them.', slot('we should regulate AI')],
+    ['F2', F2, 'The question is not whether we need rules, and how we enforce them.', missing(', but how')],
+    ['F3', F3, 'Simulation is not a substitute for field trials.', OK],
+    ['F3', F3, 'is not a substitute for field trials.', slot('Formal verification')],
+    ['F3', F3, 'Simulation is not a substitute for.', slot('testing')],
+    ['F3', F3, 'Formal verification is not a substitute for testing.', copy],
+    ['F3', F3, 'Formal verification is not a substitute for unit testing.', OK],
+    ['F4', F4, 'Price decides the outcome.', OK],
+    ['F4', F4, 'decides the outcome.', slot('not speed')],
+    ['F4', F4, 'In the end, price decides the outcome.', OK],
+    ['F4', F4, 'Price decides the outcome in most markets.', OK],
+    ['F4', F4, 'Cost, not speed, decides the outcome.', copy],
+  ];
+  for (const [name, frame, typed, want] of CASES) {
+    test('skeletonCheck ' + name + '：' + typed, () => {
+      assert.deepEqual(skeletonCheck(frame, typed), want);
+    });
+  }
+
+  test('skeletonCheck：frame 不能通過 parseFrame 時 throw，訊息帶 parseFrame 的原因', () => {
+    assert.throws(() => skeletonCheck('we propose a method.', 'we propose a plan.'),
+      { message: 'skeletonCheck：骨架不合法：至少要有一組大括號' });
+    assert.throws(() => skeletonCheck('we propose {a method.', 'we propose a plan.'),
+      { message: 'skeletonCheck：骨架不合法：大括號沒有成對' });
+  });
+
+  test("skeletonCheck：所有格、連字號、句尾沒有句點都照 tokens 比對（F3 與 Students' 的句子）", () => {
+    assert.deepEqual(skeletonCheck(F3, "Students' feedback is not a substitute for state-of-the-art testing"), OK);
+    assert.deepEqual(skeletonCheck(F3, 'Peer review is not a substitute-for testing'), OK);
+    for (const typed of [
+      "To address this issue, we propose a plan that doesn't scale.",
+      "To address this issue, we propose the students' own rubric.",
+      'To address this issue, we propose a state-of-the-art filter.',
+      'To address this issue, we propose a plan',
+      'Therefore, in this paper, to address this issue, we propose a plan.',
+    ]) assert.deepEqual(skeletonCheck(F1, typed), OK, typed);
+    assert.deepEqual(skeletonCheck(F4, 'Price decides the outcome'), OK);
+    const W = "We don't claim that {the method is optimal}.";
+    assert.deepEqual(skeletonCheck(W, "We DON'T claim that it is fast."), OK);
+    assert.deepEqual(skeletonCheck(W, 'We do not claim that it is fast.'), missing("We don't claim that"));
+  });
+
+  test("skeletonCheck：縮寫與句首多字，We don't {need more data}, but {better labels}.", () => {
+    const frame = "We don't {need more data}, but {better labels}.";
+    assert.deepEqual(skeletonCheck(frame, "Therefore, we don't need rules, but we need tests"), OK);
+    assert.deepEqual(skeletonCheck(frame, "We DON'T need rules, but tests."), OK);
+    assert.deepEqual(skeletonCheck(frame, 'We do not need rules, but tests.'), missing("We don't"));
+    assert.deepEqual(skeletonCheck(frame, "We don't, but tests."), slot('need more data'));
+  });
+
+  test('skeletonCheck：只有標點的固定字片段（", "、"."）不影響結果', () => {
+    const frame = 'It is {cheap}, {fast}, and {safe}.';
+    assert.deepEqual(skeletonCheck(frame, 'It is cheap and safe.'), OK);
+    assert.deepEqual(skeletonCheck(frame, 'It is cheap; light; and safe'), OK);
+    assert.deepEqual(skeletonCheck(frame, 'It is, and safe.'), slot('fast'));
+    assert.deepEqual(skeletonCheck(frame, 'It is cheap, fast, and.'), slot('safe'));
+  });
+}
+
+// 5.8 議題應用卡：newProdCard、prodInput、prodSubmit、prodReveal、prodOutcome
+const PT = 'To address this issue, we propose a simple yet effective method.';
+const PROD_TOPIC = '機器人安全';
+const SLOT_ONLY = 'To address this issue, we propose.';
+const GOOD = 'To address this issue, we propose a plan.';
+const freshProd = () => newProdCard(F1, PT, PROD_TOPIC);
+// 先 prodInput 再 prodSubmit；兩步的輸入都先凍結，函式若修改輸入會直接 throw
+const submitWith = (card, raw) => prodSubmit(deepFreeze(prodInput(deepFreeze(card), raw)));
+const submitTimes = (card, raw, n) => {
+  let c = card;
+  for (let i = 0; i < n; i++) c = submitWith(c, raw);
+  return c;
+};
+{
+  const fields = (c) => ({ attempts: c.attempts, revealed: c.revealed, complete: c.complete, lastError: c.lastError });
+  const row = (attempts, revealed, complete, lastError) => ({ attempts, revealed, complete, lastError });
+  const NOT_YET = '還沒有寫句子';
+  const UNTYPEABLE = '句子裡有英文鍵盤打不出的字元，請改寫';
+  const SAME = '這句和範例一樣，請換成自己的內容';
+  const MISSING = '缺少固定字：To address this issue, we propose';
+  const SLOT = '空格處要填上自己的內容：a simple yet effective method';
+
+  test('newProdCard：typed 為空字串，attempts 為 0，complete 與 revealed 為 false，lastError 與 hint 為 null', () => {
+    assert.deepEqual(freshProd(), {
+      frame: F1, target: PT, topic: PROD_TOPIC, typed: '', attempts: 0,
+      complete: false, revealed: false, lastError: null, hint: null,
+    });
+  });
+
+  test('prodInput：typed 經 canonicalizeInput，lastError 保留到下一次送出，hint 隨輸入切換', () => {
+    const failed = submitWith(freshProd(), 'We propose a plan.');
+    const next = prodInput(deepFreeze(failed), 'To address');
+    assert.equal(next.typed, 'To address');
+    assert.equal(next.lastError, MISSING);
+    assert.equal(next.attempts, 1);
+    assert.equal(prodInput(deepFreeze(freshProd()), ' In').typed, 'In');
+    const cjk = prodInput(deepFreeze(freshProd()), 'To address 這');
+    assert.equal(cjk.hint, 'cjk');
+    assert.equal(prodInput(deepFreeze(cjk), 'To address').hint, null);
+  });
+
+  test('prodSubmit：5.8 狀態轉移表的前八列（不計次、照抄、缺固定字、揭示後再送錯）', () => {
+    assert.deepEqual(fields(prodSubmit(deepFreeze(freshProd()))), row(0, false, false, NOT_YET));
+    assert.deepEqual(fields(submitWith(freshProd(), ' . , ')), row(0, false, false, NOT_YET));
+    assert.deepEqual(fields(submitWith(freshProd(), 'To address this issue, we propose 一個 plan.')), row(0, false, false, UNTYPEABLE));
+    assert.deepEqual(fields(submitWith(freshProd(), 'To address this issue, we propose a μ plan.')), row(0, false, false, UNTYPEABLE));
+    assert.deepEqual(fields(submitWith(freshProd(), PT)), row(1, false, false, SAME));
+    let c = submitWith(freshProd(), 'We propose a plan.');
+    assert.deepEqual(fields(c), row(1, false, false, MISSING));
+    c = submitTimes(c, SLOT_ONLY, 2);
+    assert.deepEqual(fields(c), row(3, true, false, SLOT));
+    c = submitWith(c, SLOT_ONLY);
+    assert.deepEqual(fields(c), row(4, true, false, SLOT));
+    c = submitWith(c, GOOD);
+    assert.deepEqual(fields(c), row(4, true, true, null));
+    assert.equal(prodOutcome(c), 'fail');
+  });
+
+  test('prodSubmit：5.8 狀態轉移表的後五列（通過、失敗兩次後通過、看範例）', () => {
+    const pass = submitWith(freshProd(), GOOD);
+    assert.deepEqual(fields(pass), row(0, false, true, null));
+    assert.equal(prodOutcome(pass), 'pass');
+    const late = submitWith(submitTimes(freshProd(), SLOT_ONLY, 2), GOOD);
+    assert.deepEqual(fields(late), row(2, false, true, null));
+    assert.equal(prodOutcome(late), 'pass');
+    const shown = prodReveal(deepFreeze(freshProd()));
+    assert.deepEqual(fields(shown), row(0, true, false, null));
+    const done = submitWith(shown, GOOD);
+    assert.deepEqual(fields(done), row(0, true, true, null));
+    assert.equal(prodOutcome(done), 'fail');
+    assert.deepEqual(fields(prodReveal(deepFreeze(submitWith(freshProd(), 'We propose a plan.')))), row(1, true, false, null));
+  });
+
+  test('prodSubmit：不計次的兩種送出不做骨架比對，反覆送出也不加 attempts', () => {
+    const c = submitTimes(freshProd(), 'To address this issue, we propose 一個 plan.', 5);
+    assert.equal(c.attempts, 0);
+    assert.equal(c.revealed, false);
+    assert.equal(c.hint, 'cjk');
+  });
+
+  test('prodReveal：新卡揭示、送錯一次後揭示會清掉 lastError，attempts 不變', () => {
+    const shown = prodReveal(deepFreeze(freshProd()));
+    assert.equal(shown.revealed, true);
+    assert.equal(shown.attempts, 0);
+    assert.equal(shown.lastError, null);
+    const failed = submitWith(freshProd(), 'We propose a plan.');
+    assert.equal(failed.lastError, MISSING);
+    const after = prodReveal(deepFreeze(failed));
+    assert.equal(after.lastError, null);
+    assert.equal(after.attempts, 1);
+  });
+
+  test('已完成的卡呼叫 prodSubmit、prodInput、prodReveal，都回傳同一個物件', () => {
+    const done = deepFreeze(submitWith(freshProd(), GOOD));
+    assert.equal(prodSubmit(done), done);
+    assert.equal(prodInput(done, 'Something else.'), done);
+    assert.equal(prodReveal(done), done);
+  });
+}
+
+// 5.8 prodStatus 的表格（T 代表 target）
+{
+  const PREV = '通過，接著議題應用';
+  const typedOnly = (raw) => prodInput(deepFreeze(freshProd()), raw);
+  const CASES = [
+    ['新卡輸入「To address 這」', () => typedOnly('To address 這'), null, '偵測到中文輸入，請切換到英文鍵盤（不計失誤）'],
+    ['新卡輸入夾中文的句子後送出', () => submitWith(freshProd(), 'To address this issue, we propose 一個 plan.'), null, '偵測到中文輸入，請切換到英文鍵盤（不計失誤）'],
+    ['新卡輸入含 μ 的句子後送出', () => submitWith(freshProd(), 'To address this issue, we propose a μ plan.'), null, '句子裡有英文鍵盤打不出的字元，請改寫'],
+    ['新卡輸入合格的句子後送出', () => submitWith(freshProd(), GOOD), null, '通過，範例：' + PT],
+    ['連續三次只寫固定字、再送出合格的句子', () => submitWith(submitTimes(freshProd(), SLOT_ONLY, 3), GOOD), null, '完成，範例：' + PT],
+    ['新卡輸入 We propose a plan. 後送出', () => submitWith(freshProd(), 'We propose a plan.'), null, '缺少固定字：To address this issue, we propose，還可以再試 2 次'],
+    ['新卡直接送出', () => prodSubmit(deepFreeze(freshProd())), null, '還沒有寫句子'],
+    ['連續三次只寫固定字後送出', () => submitTimes(freshProd(), SLOT_ONLY, 3), null, '空格處要填上自己的內容：a simple yet effective method'],
+    ['送錯一次後 prodReveal', () => prodReveal(deepFreeze(submitWith(freshProd(), 'We propose a plan.'))), null, '已顯示範例，請照骨架寫一句自己的話'],
+    ['新卡 prodReveal', () => prodReveal(deepFreeze(freshProd())), null, '已顯示範例，請照骨架寫一句自己的話'],
+    ['新卡，previous 為「通過，接著議題應用」', () => freshProd(), PREV, '上一張：通過，接著議題應用'],
+    ['送錯一次後把輸入清空（第 4 條優先於第 6 條）', () => prodInput(deepFreeze(submitWith(freshProd(), 'We propose a plan.')), ''), PREV, '缺少固定字：To address this issue, we propose，還可以再試 2 次'],
+    ['新卡', () => freshProd(), null, '用這個句型寫一句自己的話，按 Return 送出'],
+  ];
+  for (const [name, make, previous, want] of CASES) {
+    test('prodStatus：' + name, () => {
+      assert.equal(prodStatus(deepFreeze(make()), previous), want);
+    });
+  }
+}
+
+// 5.8 prodHintSegments 的表格
+{
+  const todo = (text) => ({ text, kind: 'todo' });
+  const mask = (text) => ({ text, kind: 'mask' });
+  const joined = (segs) => segs.map((s) => s.text).join('');
+
+  test('prodHintSegments F1、revealed false、firstLetters true', () => {
+    assert.deepEqual(prodHintSegments(F1, false, true), [
+      todo('T'), mask('_'), todo(' a'), mask('______'), todo(' t'), mask('___'), todo(' i'), mask('____'),
+      todo(', w'), mask('_'), todo(' p'), mask('______'), todo(' '), mask('____'), todo('.'),
+    ]);
+    assert.equal(joined(prodHintSegments(F1, false, true)), 'T_ a______ t___ i____, w_ p______ ____.');
+  });
+
+  test('prodHintSegments F1：揭示後或 firstLetters 為 false 時固定字完整顯示，空格仍是四個底線', () => {
+    const full = [todo('To address this issue, we propose '), mask('____'), todo('.')];
+    assert.deepEqual(prodHintSegments(F1, true, true), full);
+    assert.deepEqual(prodHintSegments(F1, false, false), full);
+  });
+
+  test('prodHintSegments F2、revealed false 與 true', () => {
+    assert.equal(joined(prodHintSegments(F2, false, true)), 'T__ q_______ i_ n__ w______ ____, b__ h__ ____.');
+    assert.deepEqual(prodHintSegments(F2, true, true),
+      [todo('The question is not whether '), mask('____'), todo(', but how '), mask('____'), todo('.')]);
+  });
+
+  test('prodHintSegments F3、firstLetters true 與 false', () => {
+    assert.deepEqual(prodHintSegments(F3, false, true), [
+      mask('____'), todo(' i'), mask('_'), todo(' n'), mask('__'), todo(' a s'), mask('_________'),
+      todo(' f'), mask('__'), todo(' '), mask('____'), todo('.'),
+    ]);
+    assert.equal(joined(prodHintSegments(F3, false, true)), '____ i_ n__ a s_________ f__ ____.');
+    assert.deepEqual(prodHintSegments(F3, false, false),
+      [mask('____'), todo(' is not a substitute for '), mask('____'), todo('.')]);
+  });
+
+  test('prodHintSegments：兩組緊鄰的大括號合併成八個底線', () => {
+    assert.deepEqual(prodHintSegments('{a}{b} is fine.', false, true),
+      [mask('________'), todo(' i'), mask('_'), todo(' f'), mask('___'), todo('.')]);
+  });
+
+  test('prodHintSegments：省略第三個參數等於傳 PROD_HINT_FIRST_LETTERS；frame 不合法時 throw', () => {
+    assert.deepEqual(prodHintSegments(F1, false), prodHintSegments(F1, false, PROD_HINT_FIRST_LETTERS));
+    assert.throws(() => prodHintSegments('we propose a method.', false),
+      { message: 'prodHintSegments：骨架不合法：至少要有一組大括號' });
+  });
+}

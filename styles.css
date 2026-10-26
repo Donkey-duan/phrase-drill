@@ -14,17 +14,23 @@
 }
 html, body { margin: 0; background: var(--bg); color: var(--fg); }
 html { -webkit-text-size-adjust: 100%; touch-action: manipulation; }
-body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif; }
+body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
 [hidden] { display: none !important; }
 main { max-width: 640px; margin: 0 auto; padding: 8px 16px 48px; }
 input, textarea, select, button { font-size: 17px; }           /* 不得小於 16px，否則 iOS 聚焦時會放大 */
-#p-input { width: 100%; box-sizing: border-box; font: 18px/1.4 ui-monospace, Menlo, monospace; }
-#p-hint { font: 17px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+#p-input { width: 100%; box-sizing: border-box; font: 18px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+#p-hint { font: 17px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+#p-prompt { margin: 12px 0 4px; font-size: 15px; color: var(--muted); }
+#p-prompt.recall { font-size: 20px; color: var(--fg); }
 .seg-done { color: var(--fg); }
 .seg-todo, .seg-mask { color: var(--muted); }
 .seg-mask { letter-spacing: 0.12em; }
 .seg-err { color: var(--err); background: var(--err-bg); text-decoration-line: underline; text-decoration-style: wavy; }
 #p-input.has-error { border-color: var(--err); background: var(--err-bg); }
+.p-topic { display: block; font-size: 20px; color: var(--fg); }
+.p-zh { display: block; }
+.p-example { display: block; margin-top: 4px; font: 17px/1.5 ui-monospace, Menlo, Consolas, monospace; color: var(--fg); overflow-wrap: anywhere; }
+.st-line { display: block; }
 .resume { display: none; }
 #practice:not(:focus-within) .resume { display: inline-flex; }
 button, .btn { min-height: 44px; }
@@ -86,16 +92,16 @@ summary { padding: 10px 0; }
 #p-exit { justify-self: start; }
 #p-progress { text-align: center; font-size: 15px; color: var(--muted); }
 #p-reveal { justify-self: end; }
-#p-prompt { margin: 12px 0 4px; font-size: 15px; color: var(--muted); }
-#p-prompt.recall { font-size: 20px; color: var(--fg); }
 #p-hint { margin: 4px 0 8px; }
 #p-input { display: block; padding: 8px; border: 2px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); }
 #p-status { min-height: 1.5em; margin: 8px 0; }
 .p-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-#p-debug { margin: 12px 0 0; font: 12px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; color: var(--muted); }
+#p-debug { margin: 12px 0 0; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; color: var(--muted); }
 
-/* 句子庫：上方一列是總數與新增按鈕；每一列是一顆按鈕，英文最多兩行、中文一行 */
+/* 句子庫：上方一列是總數、新增與補入內建句型的按鈕，結果文字另起一行；每一列是一顆按鈕，英文最多兩行、中文一行 */
 .lib-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
+.lib-msg { flex-basis: 100%; color: var(--muted); }
+.lib-msg:empty { display: none; }
 .lib-list { margin: 8px 0 0; }
 .lib-row { display: block; width: 100%; margin: 0 0 8px; padding: 10px 12px; text-align: start; }
 .lib-en { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }

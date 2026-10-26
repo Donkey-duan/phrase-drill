@@ -6,12 +6,15 @@ import {
 } from '../js/schedule.js';
 import { deepFreeze, makeSentence, TODAY } from './helpers.js';
 import { applyResult, compareDay, compareDayNullFirst, pickToday, levelCounts, levelLabel, dueLabel, resultMessage } from '../js/schedule.js';
+import { STAGE_NAMES, rungMessage } from '../js/schedule.js';
 
 test('schedule.js 的常數', () => {
   assert.equal(ROLLOVER_HOUR, 4);
-  assert.equal(PROMOTE_AFTER, 2);
+  assert.equal(PROMOTE_AFTER, 1);
   assert.deepEqual(L2_INTERVALS, [2, 4, 7, 14, 30]);
   assert.deepEqual(LEVEL_NAMES, ['全句提示', '首字母提示', '背誦']);
+  assert.deepEqual(STAGE_NAMES, ['全句提示', '首字母提示', '背誦', '議題應用']);
+  assert.deepEqual(LEVEL_NAMES, STAGE_NAMES.slice(0, 3));
 });
 
 // Date 一律用本地時間建構子建立，不用帶 Z 的 ISO 字串，結果才不受機器時區影響
@@ -68,18 +71,18 @@ for (const [doneDays, expected] of STREAK_CASES) {
 
 // 輸入 level、streak、outcome，期望的 level、streak、due；today 為 2026-10-14，輸入的 reps 為 3
 const APPLY_RESULT_TABLE = [
-  [0, 0, 'pass', 0, 1, '2026-10-15'],
-  [0, 1, 'pass', 1, 0, '2026-10-15'],
-  [1, 0, 'pass', 1, 1, '2026-10-15'],
-  [1, 1, 'pass', 2, 0, '2026-10-15'],
+  [0, 0, 'pass', 1, 0, '2026-10-15'],
+  [0, 1, 'pass', 1, 0, '2026-10-15'],   // 第 1 版資料
+  [1, 0, 'pass', 2, 0, '2026-10-15'],
+  [1, 1, 'pass', 2, 0, '2026-10-15'],   // 第 1 版資料
   [2, 0, 'pass', 2, 1, '2026-10-16'],
   [2, 1, 'pass', 2, 2, '2026-10-18'],
   [2, 2, 'pass', 2, 3, '2026-10-21'],
   [2, 3, 'pass', 2, 4, '2026-10-28'],
   [2, 4, 'pass', 2, 5, '2026-11-13'],
   [2, 5, 'pass', 2, 6, '2026-11-13'],
-  [0, 1, 'fail', 0, 0, '2026-10-15'],
-  [1, 1, 'fail', 0, 0, '2026-10-15'],
+  [0, 0, 'fail', 0, 0, '2026-10-15'],
+  [1, 0, 'fail', 0, 0, '2026-10-15'],
   [2, 3, 'fail', 1, 0, '2026-10-15'],
 ];
 
@@ -225,14 +228,13 @@ test('dueLabel：11/3、1/5 不補零，已逾期與 reps 大於 0 而 due 為 n
 
 // before 的 level、streak，outcome，期望文字；after 一律由 applyResult 算出
 const RESULT_MESSAGE_TABLE = [
-  [0, 0, 'pass', '通過，再 1 次升到首字母提示'],
-  [0, 1, 'pass', '通過，下次升到首字母提示'],
-  [1, 1, 'pass', '通過，下次升到背誦'],
+  [0, 0, 'pass', '通過，明天從首字母提示開始'],
+  [1, 0, 'pass', '通過，明天從背誦開始'],
   [2, 0, 'pass', '通過，維持背誦'],
-  [2, 3, 'fail', '沒過，下次退回首字母提示'],
-  [1, 1, 'fail', '沒過，下次退回全句提示'],
-  [0, 1, 'fail', '沒過，下次仍是全句提示'],
-  [1, 0, 'pass', '通過，再 1 次升到背誦'],   // 依 6.2 規則推得的補充列，確認下一層名稱不是寫死的
+  [2, 3, 'pass', '通過，維持背誦'],
+  [2, 3, 'fail', '沒過，明天退回首字母提示'],
+  [1, 0, 'fail', '沒過，明天退回全句提示'],
+  [0, 0, 'fail', '沒過，明天仍從全句提示開始'],
 ];
 
 for (const [level, streak, outcome, want] of RESULT_MESSAGE_TABLE) {
@@ -284,3 +286,19 @@ test('補充：pickToday reps 大於 0 而 due 為 null 的句子歸在第一段
   assert.deepEqual(ids, ['z', 'n', 'y']);
   assert.equal(new Set(ids).size, ids.length);
 });
+
+// ---- 第 2 版：rungMessage（規格 6.2）----
+
+const RUNG_MESSAGE_TABLE = [
+  [0, 'pass', '通過，接著首字母提示'],
+  [1, 'pass', '通過，接著背誦'],
+  [2, 'pass', '通過，接著議題應用'],
+  [0, 'fail', '沒過，再試一次全句提示'],
+  [3, 'fail', '沒過，再試一次議題應用'],
+];
+
+for (const [stage, outcome, want] of RUNG_MESSAGE_TABLE) {
+  test(`rungMessage：stage ${stage} ${outcome} 為「${want}」`, () => {
+    assert.equal(rungMessage(stage, outcome), want);
+  });
+}
