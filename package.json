@@ -1,0 +1,13 @@
+{
+  "name": "phrase-drill",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.2" },
+  "scripts": {
+    "test": "node --check js/app.js && node --test",
+    "start": "node tools/serve.mjs",
+    "release": "npm test && node tools/release.mjs",
+    "check-version": "node tools/release.mjs --check",
+    "icons": "node tools/make-icons.mjs"
+  }
+}

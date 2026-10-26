@@ -1,0 +1,106 @@
+/* styles.css：全部樣式。從 :root 到 [aria-disabled] 那一行逐字照規格 4.8 */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff; --fg: #1c1c1e; --muted: #6e6e73; --line: #d1d1d6;
+  --accent: #1e3a5f; --on-accent: #ffffff; --ok: #2e7d32;
+  --err: #c62828; --err-bg: #fdecea; --note-bg: #fff4d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000; --fg: #f2f2f7; --muted: #98989d; --line: #3a3a3c;
+    --accent: #7fb2e5; --on-accent: #000000; --ok: #81c784;
+    --err: #ef9a9a; --err-bg: #3b1f1f; --note-bg: #3a2a0a;
+  }
+}
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+html { -webkit-text-size-adjust: 100%; touch-action: manipulation; }
+body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif; }
+[hidden] { display: none !important; }
+main { max-width: 640px; margin: 0 auto; padding: 8px 16px 48px; }
+input, textarea, select, button { font-size: 17px; }           /* 不得小於 16px，否則 iOS 聚焦時會放大 */
+#p-input { width: 100%; box-sizing: border-box; font: 18px/1.4 ui-monospace, Menlo, monospace; }
+#p-hint { font: 17px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.seg-done { color: var(--fg); }
+.seg-todo, .seg-mask { color: var(--muted); }
+.seg-mask { letter-spacing: 0.12em; }
+.seg-err { color: var(--err); background: var(--err-bg); text-decoration-line: underline; text-decoration-style: wavy; }
+#p-input.has-error { border-color: var(--err); background: var(--err-bg); }
+.resume { display: none; }
+#practice:not(:focus-within) .resume { display: inline-flex; }
+button, .btn { min-height: 44px; }
+[aria-disabled="true"] { opacity: 0.4; }
+
+/* 以下是 4.8 沒有逐條列出的版面規則；class 名稱是和 app.js 的約定（見計畫第 10 任務的 Interfaces） */
+
+/* 共用 */
+main { overflow-wrap: anywhere; }
+p { margin: 8px 0; }
+h1, h2 { font-size: 20px; margin: 20px 0 8px; }
+h3 { font-size: 17px; margin: 16px 0 8px; }
+ol, ul { margin: 8px 0; padding-left: 1.5em; }
+li { margin: 4px 0; }
+.muted { color: var(--muted); }
+.note { margin: 8px 0; padding: 8px 12px; border-radius: 8px; background: var(--note-bg); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+.actions > span:empty { display: none; }
+
+/* 按鈕：button 與 label.btn 外觀相同 */
+button, .btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  box-sizing: border-box; margin: 0; padding: 0 16px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg); color: var(--fg); font-family: inherit; line-height: inherit;
+  -webkit-appearance: none; appearance: none;
+}
+.btn { font-size: 17px; }
+button:disabled { opacity: 0.4; }
+.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+/* 文字欄位、選單、勾選框，以及編輯頁的說明與按鈕列 */
+textarea, input:not([type]), input[type="text"] { width: 100%; }
+textarea, select, input:not([type]), input[type="text"] {
+  box-sizing: border-box; padding: 8px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--fg); font-family: inherit; line-height: inherit;
+}
+select { min-height: 44px; }
+input[type="checkbox"] { width: 22px; height: 22px; margin: 0 8px 0 0; vertical-align: middle; }
+label { display: block; margin: 12px 0 4px; }
+.field-err { margin: 4px 0 8px; color: var(--err); }
+.help { margin: 4px 0; color: var(--muted); }
+.edit-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0 8px; }
+details { margin: 8px 0; }
+summary { padding: 10px 0; }
+
+/* 錯誤橫幅與導覽列：都在一般文件流裡 */
+.err-banner { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--err-bg); color: var(--err); border-bottom: 2px solid var(--err); }
+#err-text { flex: 1; overflow-wrap: anywhere; }
+.nav { display: flex; gap: 8px; max-width: 640px; margin: 0 auto; padding: 8px 16px 0; }
+.nav button { flex: 1; padding: 0 8px; }
+
+/* 首頁 */
+#home .primary { width: 100%; margin: 8px 0; }
+
+/* 練習頁：內容從頂端往下排，輸入框上方保持精簡 */
+.p-top { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; }
+#p-exit { justify-self: start; }
+#p-progress { text-align: center; font-size: 15px; color: var(--muted); }
+#p-reveal { justify-self: end; }
+#p-prompt { margin: 12px 0 4px; font-size: 15px; color: var(--muted); }
+#p-prompt.recall { font-size: 20px; color: var(--fg); }
+#p-hint { margin: 4px 0 8px; }
+#p-input { display: block; padding: 8px; border: 2px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); }
+#p-status { min-height: 1.5em; margin: 8px 0; }
+.p-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+#p-debug { margin: 12px 0 0; font: 12px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; color: var(--muted); }
+
+/* 句子庫：上方一列是總數與新增按鈕；每一列是一顆按鈕，英文最多兩行、中文一行 */
+.lib-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
+.lib-list { margin: 8px 0 0; }
+.lib-row { display: block; width: 100%; margin: 0 0 8px; padding: 10px 12px; text-align: start; }
+.lib-en { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.lib-zh { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
+.lib-meta { display: block; margin-top: 4px; font-size: 14px; color: var(--muted); }
+
+/* 設定頁：「從檔案匯入」的 file input 視覺上隱藏，由 label.btn 觸發 */
+#import-file { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

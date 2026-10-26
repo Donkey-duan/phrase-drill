@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<meta name="format-detection" content="telephone=no">
+<title>句練</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/icon-180.png">
+<link rel="stylesheet" href="./styles.css">
+<script src="./js/boot.js"></script>
+<script type="module" src="./js/app.js"></script>
+</head>
+<body>
+  <div id="err-banner" class="err-banner" hidden>
+    <span id="err-text"></span>
+    <button type="button" id="err-close">關閉</button>
+  </div>
+  <nav id="nav" class="nav">
+    <button type="button" data-go="home">今天</button>
+    <button type="button" data-go="library">句子庫</button>
+    <button type="button" data-go="settings">設定</button>
+  </nav>
+  <main>
+    <section id="home" hidden></section>
+    <section id="practice" hidden>
+      <div id="p-card">
+        <div class="p-top">
+          <button type="button" id="p-exit">結束</button>
+          <span id="p-progress"></span>
+          <button type="button" id="p-reveal">看答案</button>
+        </div>
+        <p id="p-prompt" lang="zh-Hant-TW"></p>
+        <div id="p-hint" lang="en"></div>
+        <textarea id="p-input" rows="3" lang="en" aria-label="輸入句子"
+          autocorrect="off" autocapitalize="none" autocomplete="off" spellcheck="false"
+          writingsuggestions="false" enterkeyhint="next"></textarea>
+        <p id="p-status" aria-live="polite"></p>
+        <div class="p-actions">
+          <button type="button" id="p-next" aria-disabled="true">下一句</button>
+          <button type="button" id="p-resume" class="resume">繼續打字</button>
+        </div>
+        <pre id="p-debug" hidden></pre>
+      </div>
+      <div id="p-summary" hidden></div>
+    </section>
+    <section id="library" hidden></section>
+    <section id="edit" hidden></section>
+    <section id="settings" hidden></section>
+  </main>
+</body>
+</html>
