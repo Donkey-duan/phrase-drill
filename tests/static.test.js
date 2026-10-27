@@ -114,6 +114,15 @@ test('js/app.js：全文（含註解）不得出現 innerHTML', () => {
   assert.equal(read('js/app.js').includes('innerHTML'), false);
 });
 
+// 規格 4.3、4.8：議題應用卡的題目區第一行是完整指示，中文那一行有「原句：」前綴，.p-topic 是 17px
+test('4.3 議題應用卡的題目區文案與 .p-topic 字級', () => {
+  const app = read('js/app.js');
+  assert.ok(app.includes('用這個句型寫一句關於「'), 'js/app.js 找不到題目區第一行的指示文字');
+  assert.ok(app.includes('原句：'), 'js/app.js 找不到「原句：」前綴');
+  assert.equal(app.includes('議題：'), false, 'js/app.js 不得再出現「議題：」');
+  assert.ok(read('styles.css').includes('.p-topic { display: block; font-size: 17px; color: var(--fg); }'), 'styles.css 的 .p-topic 要是 17px');
+});
+
 // app.js 裡頂層 function 的本文：從 `function 名稱(` 切到下一個頂層 function（含 async function）或檔尾，去掉行註解
 function appFunctionBody(src, name) {
   const start = src.indexOf('\nfunction ' + name + '(');

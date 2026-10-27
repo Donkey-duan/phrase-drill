@@ -27,7 +27,7 @@ input, textarea, select, button { font-size: 17px; }           /* 不得小於 1
 .seg-mask { letter-spacing: 0.12em; }
 .seg-err { color: var(--err); background: var(--err-bg); text-decoration-line: underline; text-decoration-style: wavy; }
 #p-input.has-error { border-color: var(--err); background: var(--err-bg); }
-.p-topic { display: block; font-size: 20px; color: var(--fg); }
+.p-topic { display: block; font-size: 17px; color: var(--fg); }
 .p-zh { display: block; }
 .p-example { display: block; margin-top: 4px; font: 17px/1.5 ui-monospace, Menlo, Consolas, monospace; color: var(--fg); overflow-wrap: anywhere; }
 .st-line { display: block; }

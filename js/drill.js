@@ -6,7 +6,7 @@ export const LONG_SENTENCE_WORDS = 16;    // 達到這個字數，容許上限�
 export const DEVIATION_LIMIT = 3;         // L0 錯誤尾巴累積到這個長度才計失誤
 export const ANCHOR_WORDS = 2;            // L2 顯示的開頭字數
 export const PROD_ATTEMPTS = 3;           // 議題應用送出失敗幾次後揭示範例
-export const PROD_HINT_FIRST_LETTERS = true;  // 議題應用的提示列固定字只給首字母；false 時固定字完整顯示
+export const PROD_HINT_FIRST_LETTERS = false;  // 議題應用的提示列固定字完整顯示；true 時只給首字母（2026-10-27 由 true 改為 false：首字母版讓人看不出是填空）
 export const SLOT_BLANK = '____';         // 提示列裡空格的顯示文字，四個底線
 
 // 5.3 mapPunct 對照表：來源字元 → ASCII

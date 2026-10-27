@@ -511,9 +511,9 @@ import { PROD_ATTEMPTS, PROD_HINT_FIRST_LETTERS, SLOT_BLANK, stripBraces, tokens
 import { newProdCard, prodInput, prodSubmit, prodReveal, prodOutcome, prodStatus, prodHintSegments } from '../js/drill.js';
 import { deepFreeze } from './helpers.js';
 
-test('5.7 第 2 版的常數：PROD_ATTEMPTS 3、PROD_HINT_FIRST_LETTERS true、SLOT_BLANK 四個底線', () => {
+test('5.7 第 2 版的常數：PROD_ATTEMPTS 3、PROD_HINT_FIRST_LETTERS false、SLOT_BLANK 四個底線', () => {
   assert.equal(PROD_ATTEMPTS, 3);
-  assert.equal(PROD_HINT_FIRST_LETTERS, true);
+  assert.equal(PROD_HINT_FIRST_LETTERS, false);
   assert.equal(SLOT_BLANK, '____');
 });
 

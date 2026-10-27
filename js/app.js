@@ -210,10 +210,10 @@ function renderPractice() {
   promptEl.classList.toggle('recall', !prod && lv === 2);  // 只有打字卡的 lv 為 2 時是 20px 正常字色
   if (prod) {
     fill(promptEl,
-      h('span', { class: 'p-topic' }, '議題：' + card.topic),
+      h('span', { class: 'p-topic' }, '用這個句型寫一句關於「' + card.topic + '」的話'),
       card.revealed && !card.complete           // 揭示後、完成前第二行改顯示範例，取代中文那一行，題目區不會變高
         ? h('span', { class: 'p-example', lang: 'en' }, '範例：' + card.target)
-        : cardSentence.zh === '' ? null : h('span', { class: 'p-zh' }, cardSentence.zh));
+        : cardSentence.zh === '' ? null : h('span', { class: 'p-zh' }, '原句：' + cardSentence.zh));
   } else {
     promptEl.textContent = lv === 2 && cardSentence.zh === '' ? '（沒有中文意思，請從開頭兩個字背出整句）' : cardSentence.zh;
   }
